@@ -6,17 +6,26 @@ import {
     isCancellationError,
 } from './errors.js';
 import {createMarketSnapshot} from './quote.js';
+import {GlibScheduler} from './scheduler.js';
 
 const EXPECTED_QUOTES = Object.freeze({
     fx: ['USDTRY', 'EURTRY'],
     gold: ['GOLD_GRAM_TRY'],
 });
 
+export const REFRESH_INTERVALS = Object.freeze([600, 900, 1800, 3600]);
+
 export class MarketService {
-    constructor({settings, registry, providerContext = {}}) {
+    constructor({
+        settings,
+        registry,
+        providerContext = {},
+        scheduler = new GlibScheduler(),
+    }) {
         this._settings = settings;
         this._registry = registry;
         this._providerContext = providerContext;
+        this._scheduler = scheduler;
         this._providers = new Map();
         this._listeners = new Map();
         this._nextListenerId = 1;
@@ -25,7 +34,9 @@ export class MarketService {
         this._status = 'loading';
         this._lastError = null;
         this._refreshPromise = null;
+        this._isRefreshing = false;
         this._cancellable = null;
+        this._timerId = 0;
         this._generation = 0;
         this._destroyed = false;
         this._started = false;
@@ -37,6 +48,10 @@ export class MarketService {
 
     get lastError() {
         return this._lastError;
+    }
+
+    get isRefreshing() {
+        return this._isRefreshing;
     }
 
     getSnapshot() {
@@ -76,6 +91,7 @@ export class MarketService {
                 this._status = 'error';
                 this._lastError = error;
                 this._emitChanged();
+                this._scheduleNextRefresh();
             }
         }
     }
@@ -83,23 +99,32 @@ export class MarketService {
     refresh() {
         if (this._destroyed)
             return Promise.resolve();
+        this._cancelRefreshTimer();
         if (this._refreshPromise)
             return this._refreshPromise;
 
         const generation = this._generation;
         const cancellable = new Gio.Cancellable();
         this._cancellable = cancellable;
+        this._isRefreshing = true;
         this._status = this._snapshot.updatedAt === null ? 'loading' : 'ready';
         this._lastError = null;
-        this._emitChanged();
 
         const task = this._fetchAll(generation, cancellable);
-        this._refreshPromise = task.finally(() => {
+        const refreshPromise = task.finally(() => {
             if (this._cancellable === cancellable)
                 this._cancellable = null;
-            if (this._refreshPromise)
+            if (this._refreshPromise === refreshPromise) {
                 this._refreshPromise = null;
+                this._isRefreshing = false;
+                if (!this._destroyed) {
+                    this._emitChanged();
+                    this._scheduleNextRefresh();
+                }
+            }
         });
+        this._refreshPromise = refreshPromise;
+        this._emitChanged();
         return this._refreshPromise;
     }
 
@@ -201,11 +226,15 @@ export class MarketService {
                 () => this._handleProviderChange());
             this._settingsSignalIds.push(id);
         }
+        this._settingsSignalIds.push(this._settings.connect(
+            'changed::refresh-interval',
+            () => this._handleRefreshIntervalChange()));
     }
 
     _handleProviderChange() {
         if (this._destroyed)
             return;
+        this._cancelRefreshTimer();
         this._generation++;
         this._cancellable?.cancel();
         const pending = this._refreshPromise ?? Promise.resolve();
@@ -219,8 +248,42 @@ export class MarketService {
                 this._status = 'error';
                 this._lastError = error;
                 this._emitChanged();
+                this._scheduleNextRefresh();
             }
         });
+    }
+
+    _handleRefreshIntervalChange() {
+        if (this._destroyed)
+            return;
+        this._cancelRefreshTimer();
+        if (!this._isRefreshing)
+            this._scheduleNextRefresh();
+    }
+
+    _getRefreshInterval() {
+        const interval = this._settings.get_uint('refresh-interval');
+        return REFRESH_INTERVALS.includes(interval) ? interval : 600;
+    }
+
+    _scheduleNextRefresh() {
+        if (this._destroyed || !this._started || this._isRefreshing ||
+            this._timerId !== 0)
+            return;
+
+        this._timerId = this._scheduler.scheduleSeconds(
+            this._getRefreshInterval(),
+            () => {
+                this._timerId = 0;
+                void this.refresh();
+            });
+    }
+
+    _cancelRefreshTimer() {
+        if (this._timerId === 0)
+            return;
+        this._scheduler.cancel(this._timerId);
+        this._timerId = 0;
     }
 
     _emitChanged() {
@@ -239,7 +302,9 @@ export class MarketService {
         if (this._destroyed)
             return;
         this._destroyed = true;
+        this._started = false;
         this._generation++;
+        this._cancelRefreshTimer();
         this._cancellable?.cancel();
         this._cancellable = null;
 
@@ -254,5 +319,6 @@ export class MarketService {
         this._settings = null;
         this._registry = null;
         this._providerContext = null;
+        this._scheduler = null;
     }
 }

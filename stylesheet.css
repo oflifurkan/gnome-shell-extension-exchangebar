@@ -31,6 +31,11 @@
     color: #f66151;
 }
 
+.exchangebar-refresh-button {
+    margin-top: 4px;
+    padding: 6px 10px;
+}
+
 .exchangebar-converter {
     min-width: 260px;
     spacing: 8px;

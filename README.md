@@ -47,6 +47,8 @@ provider instances and market state; the panel and popup consume that service
 and never access provider payloads. Currency and gold provider IDs are stored
 independently so later releases can mix data sources. Converter mathematics
 also consume only normalized quotes and have no dependency on Shell UI code.
+Market data refreshes ten minutes after each completed update attempt, and the
+popup provides a manual refresh action that resets that countdown.
 
 ## Test XAUS
 

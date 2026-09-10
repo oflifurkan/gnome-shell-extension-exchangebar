@@ -12,7 +12,7 @@ export function createProviderSettingsGroup(_) {
     }));
     group.add(new Adw.ActionRow({
         title: _('Refresh interval'),
-        subtitle: _('10 minutes · automatic refresh is coming in a later milestone'),
+        subtitle: _('10 minutes'),
     }));
     return group;
 }

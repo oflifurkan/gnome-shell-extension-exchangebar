@@ -17,7 +17,7 @@ import {
     RateLimitError,
     UnsupportedAssetError,
 } from '../src/core/errors.js';
-import {MarketService} from '../src/core/marketService.js';
+import {MarketService, REFRESH_INTERVALS} from '../src/core/marketService.js';
 import {ProviderRegistry} from '../src/core/providerRegistry.js';
 import {createCommodityQuote, createCurrencyQuote, createMarketSnapshot} from '../src/core/quote.js';
 import {FakeProvider} from '../src/providers/fakeProvider.js';
@@ -90,6 +90,7 @@ class FakeSettings {
         this._values = {
             'fx-provider': 'fake',
             'gold-provider': 'fake',
+            'refresh-interval': 600,
             ...values,
         };
         this._signals = new Map();
@@ -97,6 +98,10 @@ class FakeSettings {
     }
 
     get_string(key) {
+        return this._values[key];
+    }
+
+    get_uint(key) {
         return this._values[key];
     }
 
@@ -111,11 +116,48 @@ class FakeSettings {
     }
 
     set_string(key, value) {
+        this._set(key, value);
+    }
+
+    set_uint(key, value) {
+        this._set(key, value);
+    }
+
+    _set(key, value) {
         this._values[key] = value;
         for (const entry of this._signals.values()) {
             if (entry.signal === `changed::${key}`)
                 entry.callback();
         }
+    }
+}
+
+class FakeScheduler {
+    constructor() {
+        this._nextId = 1;
+        this.active = new Map();
+        this.scheduled = [];
+        this.cancelled = [];
+    }
+
+    scheduleSeconds(delay, callback) {
+        const id = this._nextId++;
+        this.active.set(id, callback);
+        this.scheduled.push({id, delay});
+        return id;
+    }
+
+    cancel(id) {
+        this.cancelled.push(id);
+        this.active.delete(id);
+    }
+
+    fire(id) {
+        const callback = this.active.get(id);
+        if (!callback)
+            throw new Error(`Timer ${id} is not active`);
+        this.active.delete(id);
+        callback();
     }
 }
 
@@ -202,6 +244,17 @@ class TestProvider {
 
     dispose() {
         this.disposed = true;
+    }
+}
+
+class DeferredProvider extends TestProvider {
+    async fetchQuotes(request, cancellable) {
+        this._tracker.push({...request});
+        this.cancellable = cancellable;
+        const quotes = await new Promise(resolve => {
+            this.release = resolve;
+        });
+        return quotes;
     }
 }
 
@@ -629,6 +682,127 @@ await test('disposed Soup HTTP clients reject without network access', async () 
     client.dispose();
     client.dispose();
     await assertRejects(() => client.get('https://example.invalid'), NetworkError);
+});
+
+await test('market service schedules refresh after startup and manual refresh', async () => {
+    const scheduler = new FakeScheduler();
+    const service = new MarketService({
+        settings: new FakeSettings(),
+        registry: createRegistry(),
+        scheduler,
+    });
+    const refreshingStates = [];
+    service.subscribe(current => refreshingStates.push(current.isRefreshing));
+    await service.start();
+    assertEqual(scheduler.scheduled.length, 1);
+    assertEqual(scheduler.scheduled[0].delay, 600);
+    assertEqual(scheduler.active.size, 1);
+
+    const firstTimer = scheduler.scheduled[0].id;
+    await service.refresh();
+    assert(scheduler.cancelled.includes(firstTimer));
+    assertEqual(scheduler.scheduled.length, 2);
+    assertEqual(scheduler.active.size, 1);
+    assert(refreshingStates.includes(true));
+    assertEqual(refreshingStates.at(-1), false);
+    service.destroy();
+});
+
+await test('automatic timer refreshes once and schedules from completion', async () => {
+    const tracker = [];
+    const scheduler = new FakeScheduler();
+    const registry = new ProviderRegistry();
+    registry.register(testMetadata('scheduled'),
+        () => new TestProvider('scheduled', tracker));
+    const service = new MarketService({
+        settings: new FakeSettings({
+            'fx-provider': 'scheduled',
+            'gold-provider': 'scheduled',
+        }),
+        registry,
+        scheduler,
+    });
+    await service.start();
+    assertEqual(tracker.length, 1);
+    const timerId = scheduler.scheduled[0].id;
+    scheduler.fire(timerId);
+    assertEqual(scheduler.active.size, 0);
+    await waitFor(() => tracker.length === 2 && scheduler.active.size === 1,
+        'Automatic refresh did not complete and reschedule');
+    assertEqual(scheduler.scheduled.length, 2);
+    service.destroy();
+});
+
+await test('refresh failures keep retry scheduling active', async () => {
+    const scheduler = new FakeScheduler();
+    const registry = new ProviderRegistry();
+    registry.register(testMetadata('offline'),
+        () => new TestProvider('offline', [], {fail: true}));
+    const service = new MarketService({
+        settings: new FakeSettings({
+            'fx-provider': 'offline',
+            'gold-provider': 'offline',
+        }),
+        registry,
+        scheduler,
+    });
+    await service.start();
+    assertEqual(service.status, 'error');
+    assertEqual(service.isRefreshing, false);
+    assertEqual(scheduler.active.size, 1);
+    service.destroy();
+});
+
+await test('refresh interval changes replace the pending timer', async () => {
+    const settings = new FakeSettings();
+    const scheduler = new FakeScheduler();
+    const service = new MarketService({
+        settings,
+        registry: createRegistry(),
+        scheduler,
+    });
+    await service.start();
+    const firstTimer = scheduler.scheduled[0].id;
+    settings.set_uint('refresh-interval', 900);
+    assert(scheduler.cancelled.includes(firstTimer));
+    assertEqual(scheduler.scheduled.at(-1).delay, 900);
+    assert(REFRESH_INTERVALS.includes(scheduler.scheduled.at(-1).delay));
+
+    settings.set_uint('refresh-interval', 601);
+    assertEqual(scheduler.scheduled.at(-1).delay, 600);
+    service.destroy();
+});
+
+await test('destroy cancels pending work without late callbacks or timers', async () => {
+    const tracker = [];
+    const scheduler = new FakeScheduler();
+    let provider;
+    const registry = new ProviderRegistry();
+    registry.register(testMetadata('deferred'), () => {
+        provider = new DeferredProvider('deferred', tracker);
+        return provider;
+    });
+    const service = new MarketService({
+        settings: new FakeSettings({
+            'fx-provider': 'deferred',
+            'gold-provider': 'deferred',
+        }),
+        registry,
+        scheduler,
+    });
+    let notificationCount = 0;
+    service.subscribe(() => notificationCount++);
+    const startPromise = service.start();
+    await waitFor(() => provider?.release,
+        'Deferred provider request did not begin');
+    const countBeforeDestroy = notificationCount;
+    service.destroy();
+    assert(provider.cancellable.is_cancelled());
+    assert(provider.disposed);
+    provider.release([]);
+    await startPromise;
+    assertEqual(notificationCount, countBeforeDestroy);
+    assertEqual(scheduler.active.size, 0);
 });
 
 print(`1..${passed}`);

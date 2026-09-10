@@ -70,6 +70,18 @@ export class MarketMenu {
         this._errorItem.label.add_style_class_name('exchangebar-menu-error');
         menu.addMenuItem(this._errorItem);
 
+        const refreshItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
+        this._refreshButton = new St.Button({
+            label: _('Refresh'),
+            can_focus: true,
+            x_expand: true,
+            style_class: 'button exchangebar-refresh-button',
+        });
+        this._refreshSignalId = this._refreshButton.connect('clicked',
+            () => void this._service.refresh());
+        refreshItem.add_child(this._refreshButton);
+        menu.addMenuItem(refreshItem);
+
         menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         const converterItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
         this._converterView = new ConverterView(_);
@@ -106,10 +118,22 @@ export class MarketMenu {
             ? this._('Unable to update: %s')
                 .replace('%s', this._service.lastError.message)
             : '';
+
+        const refreshing = this._service.isRefreshing;
+        this._refreshButton.label = refreshing
+            ? this._('Refreshing…')
+            : this._('Refresh');
+        this._refreshButton.reactive = !refreshing;
+        this._refreshButton.can_focus = !refreshing;
         this._converterView.render(snapshot.quotes);
     }
 
     destroy() {
+        if (this._refreshSignalId) {
+            this._refreshButton.disconnect(this._refreshSignalId);
+            this._refreshSignalId = 0;
+        }
+        this._refreshButton = null;
         this._converterView.destroy();
         this._converterView = null;
         this._rows.clear();
