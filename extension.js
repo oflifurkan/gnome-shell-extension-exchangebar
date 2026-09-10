@@ -3,26 +3,18 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 import {MarketCache} from './src/core/cache.js';
 import {MarketService} from './src/core/marketService.js';
-import {ProviderRegistry} from './src/core/providerRegistry.js';
-import {DolarTodayProvider} from './src/providers/dolarToday.js';
-import {FakeProvider} from './src/providers/fakeProvider.js';
-import {XausProvider} from './src/providers/xaus.js';
+import {createProviderRegistry} from './src/providers/catalog.js';
 import {ExchangeBarIndicator} from './src/ui/indicator.js';
 
 export default class ExchangeBarExtension extends Extension {
     enable() {
         const settings = this.getSettings();
-        const registry = new ProviderRegistry();
-        registry.register(FakeProvider.metadata,
-            context => new FakeProvider(context));
-        registry.register(DolarTodayProvider.metadata,
-            context => new DolarTodayProvider(context));
-        registry.register(XausProvider.metadata,
-            context => new XausProvider(context));
+        const registry = createProviderRegistry();
 
         this._marketService = new MarketService({
             settings,
             registry,
+            providerContext: {settings},
             cache: new MarketCache(),
         });
         this._indicator = new ExchangeBarIndicator(

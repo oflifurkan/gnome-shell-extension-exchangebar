@@ -14,6 +14,11 @@ import {
     parseAmount,
 } from '../src/core/converter.js';
 import {
+    REFRESH_INTERVAL_CHOICES,
+    findChoiceIndex,
+    getChoiceValue,
+} from '../prefs/choices.js';
+import {
     CancellationError,
     InvalidAmountError,
     InvalidResponseError,
@@ -29,10 +34,18 @@ import {createCommodityQuote, createCurrencyQuote, createMarketSnapshot} from '.
 import {
     DOLAR_TODAY_ENDPOINT,
     MAX_FX_FRESH_AGE_SECONDS,
+    MAX_TCMB_FRESH_AGE_SECONDS,
     DolarTodayProvider,
+    DolarTodaySource,
+    buildDolarTodayEndpoint,
     parseDolarTodayRates,
     translateDolarTodayHttpError,
 } from '../src/providers/dolarToday.js';
+import {
+    createProviderRegistry,
+    getProviderPreferences,
+    listProviderChoices,
+} from '../src/providers/catalog.js';
 import {FakeProvider} from '../src/providers/fakeProvider.js';
 import {SoupHttpClient} from '../src/providers/httpClient.js';
 import {
@@ -104,6 +117,8 @@ class FakeSettings {
             'fx-provider': 'fake',
             'gold-provider': 'fake',
             'refresh-interval': 600,
+            'dolar-today-source': 'serbest',
+            'provider-mode': 'a',
             ...values,
         };
         this._signals = new Map();
@@ -414,6 +429,39 @@ await test('registry creates providers and filters capabilities', () => {
     assertThrows(() => registry.register(FakeProvider.metadata, () => null), TypeError);
 });
 
+await test('provider catalog exposes ordered capability choices and settings', () => {
+    const registry = createProviderRegistry();
+    assertEqual(registry.list('currencies')[0].id, 'dolar-today');
+    assertEqual(registry.list('metals')[0].id, 'xaus');
+    assert(Object.isFrozen(
+        registry.getMetadata('dolar-today').settingsKeys));
+    assertEqual(
+        registry.getMetadata('dolar-today').settingsKeys[0],
+        'dolar-today-source');
+
+    const fxChoices = listProviderChoices('currencies');
+    assertEqual(fxChoices[0].value, 'dolar-today');
+    assertEqual(fxChoices.at(-1).value, 'fake');
+    assertEqual(fxChoices.at(-1).label, 'Fake Provider (Test)');
+    const goldChoices = listProviderChoices('metals');
+    assertEqual(goldChoices[0].value, 'xaus');
+    assertEqual(goldChoices.at(-1).value, 'fake');
+
+    const preferences = getProviderPreferences('dolar-today');
+    assertEqual(preferences.length, 1);
+    assertEqual(preferences[0].key, 'dolar-today-source');
+    assertEqual(getProviderPreferences('xaus').length, 0);
+});
+
+await test('preference choice mapping preserves stable stored values', () => {
+    assertEqual(findChoiceIndex(REFRESH_INTERVAL_CHOICES, 1800), 2);
+    assertEqual(findChoiceIndex(REFRESH_INTERVAL_CHOICES, 601), -1);
+    assertEqual(getChoiceValue(REFRESH_INTERVAL_CHOICES, 0), 600);
+    assertEqual(getChoiceValue(REFRESH_INTERVAL_CHOICES, 3), 3600);
+    assertThrows(() => getChoiceValue(REFRESH_INTERVAL_CHOICES, -1), RangeError);
+    assertThrows(() => getChoiceValue(REFRESH_INTERVAL_CHOICES, 4), RangeError);
+});
+
 await test('fake provider returns exact normalized quotes', async () => {
     const provider = new FakeProvider({clock: () => 1789048320});
     const quotes = await provider.fetchQuotes({fx: true, gold: true});
@@ -563,6 +611,44 @@ await test('provider setting changes replace and dispose providers', async () =>
     await waitFor(() => service.getQuote('GOLD_GRAM_TRY')?.provider === 'new',
         'Gold provider was not replaced');
     assert(oldProvider.disposed);
+    service.destroy();
+});
+
+await test('active provider configuration changes recreate and refresh once', async () => {
+    const tracker = [];
+    const created = [];
+    const registry = new ProviderRegistry();
+    registry.register({
+        ...testMetadata('configured'),
+        settingsKeys: ['provider-mode'],
+    }, context => {
+        const provider = new TestProvider('configured', tracker);
+        created.push({
+            provider,
+            mode: context.settings.get_string('provider-mode'),
+        });
+        return provider;
+    });
+    const settings = new FakeSettings({
+        'fx-provider': 'configured',
+        'gold-provider': 'configured',
+    });
+    const service = new MarketService({
+        settings,
+        registry,
+        providerContext: {settings},
+    });
+    await service.start();
+    assertEqual(created.length, 1);
+    assertEqual(created[0].mode, 'a');
+
+    settings.set_string('provider-mode', 'b');
+    settings.set_string('provider-mode', 'c');
+    await waitFor(() => created.length === 2 && tracker.length === 2,
+        'Configured provider was not recreated and refreshed');
+    assert(created[0].provider.disposed);
+    assertEqual(created[1].mode, 'c');
+    assertEqual(service.status, 'ready');
     service.destroy();
 });
 
@@ -812,6 +898,50 @@ await test('DolarToday parser normalizes selling prices and bid/ask', () => {
     assertClose(convert(
         1, ConverterAsset.EUR, ConverterAsset.TRY,
         createMarketSnapshot(quotes).quotes), 56.439611);
+});
+
+await test('DolarToday supports Free Market and TCMB source configuration', async () => {
+    assertEqual(
+        buildDolarTodayEndpoint(DolarTodaySource.FREE_MARKET),
+        DOLAR_TODAY_ENDPOINT);
+    assert(buildDolarTodayEndpoint(DolarTodaySource.TCMB).endsWith('source=tcmb'));
+    assertThrows(() => buildDolarTodayEndpoint('unknown'), TypeError);
+
+    const payload = clone(loadJsonFixture('dolar-today/rates-fresh.json'));
+    for (const rate of Object.values(payload.rates))
+        rate.source = 'tcmb';
+    const httpClient = new StubHttpClient({
+        status: 200,
+        body: JSON.stringify(payload),
+    });
+    const provider = new DolarTodayProvider({
+        httpClient,
+        source: DolarTodaySource.TCMB,
+        clock: () => DOLAR_TODAY_FIXTURE_TIME,
+    });
+    const quotes = await provider.fetchQuotes({fx: true});
+    assertEqual(quotes.length, 2);
+    assert(httpClient.calls[0].url.endsWith('source=tcmb'));
+    assertEqual(quotes[0].provider, 'dolar-today');
+    assert(!quotes[0].stale);
+    provider.dispose();
+
+    const sourceTimestamp = Math.floor(Date.parse(payload.updated_at) / 1000);
+    const currentTcmb = parseDolarTodayRates(payload, {
+        source: DolarTodaySource.TCMB,
+        clock: () => sourceTimestamp + 24 * 60 * 60,
+    });
+    assert(currentTcmb.every(quote => !quote.stale));
+    const staleTcmb = parseDolarTodayRates(payload, {
+        source: DolarTodaySource.TCMB,
+        clock: () => sourceTimestamp + MAX_TCMB_FRESH_AGE_SECONDS + 1,
+    });
+    assert(staleTcmb.every(quote => quote.stale));
+
+    assertThrows(() => parseDolarTodayRates(payload, {
+        source: 'unknown',
+        clock: () => DOLAR_TODAY_FIXTURE_TIME,
+    }), TypeError);
 });
 
 await test('DolarToday parser detects stale rates from source timestamps', () => {

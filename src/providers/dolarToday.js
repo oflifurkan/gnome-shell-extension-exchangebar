@@ -8,9 +8,28 @@ import {createCurrencyQuote} from '../core/quote.js';
 import {SoupHttpClient} from './httpClient.js';
 import {Provider} from './provider.js';
 
-export const DOLAR_TODAY_ENDPOINT =
-    'https://dolartoday.org/api/rates?symbols=USD%2CEUR&source=serbest';
+export const DolarTodaySource = Object.freeze({
+    FREE_MARKET: 'serbest',
+    TCMB: 'tcmb',
+});
+
+const VALID_SOURCES = Object.freeze(Object.values(DolarTodaySource));
+
+function requireSource(source) {
+    if (!VALID_SOURCES.includes(source))
+        throw new TypeError(`Unsupported DolarToday source "${source}"`);
+    return source;
+}
+
+export function buildDolarTodayEndpoint(source) {
+    return 'https://dolartoday.org/api/rates?symbols=USD%2CEUR&source=' +
+        encodeURIComponent(requireSource(source));
+}
+
+export const DOLAR_TODAY_ENDPOINT = buildDolarTodayEndpoint(
+    DolarTodaySource.FREE_MARKET);
 export const MAX_FX_FRESH_AGE_SECONDS = 900;
+export const MAX_TCMB_FRESH_AGE_SECONDS = 7 * 24 * 60 * 60;
 
 const REQUIRED_RATES = Object.freeze([
     {code: 'USD', id: 'USDTRY'},
@@ -57,7 +76,11 @@ export function translateDolarTodayHttpError(status, payload = null) {
 
 export function parseDolarTodayRates(
     payload,
-    {clock = () => Math.floor(Date.now() / 1000)} = {}) {
+    {
+        clock = () => Math.floor(Date.now() / 1000),
+        source = DolarTodaySource.FREE_MARKET,
+    } = {}) {
+    requireSource(source);
     if (!isRecord(payload))
         throw new InvalidResponseError('DolarToday returned an invalid response');
     if (payload.success !== true) {
@@ -79,15 +102,18 @@ export function parseDolarTodayRates(
             throw new InvalidResponseError(
                 `DolarToday response has no valid ${code} rate`);
         }
-        if (rate.source !== 'serbest') {
+        if (rate.source !== source) {
             throw new InvalidResponseError(
-                `DolarToday ${code} rate is not from the free market`);
+                `DolarToday ${code} rate is from the wrong source`);
         }
 
         const bid = requirePositiveNumber(rate.buy, `${code} buying rate`);
         const ask = requirePositiveNumber(rate.sell, `${code} selling rate`);
         const timestamp = parseTimestamp(rate.updated_at ?? payload.updated_at);
         const ageSeconds = Math.max(0, receivedAt - timestamp);
+        const maxFreshAge = source === DolarTodaySource.TCMB
+            ? MAX_TCMB_FRESH_AGE_SECONDS
+            : MAX_FX_FRESH_AGE_SECONDS;
 
         return createCurrencyQuote({
             id,
@@ -96,7 +122,7 @@ export function parseDolarTodayRates(
             value: ask,
             timestamp,
             provider: DolarTodayProvider.metadata.id,
-            stale: ageSeconds > MAX_FX_FRESH_AGE_SECONDS,
+            stale: ageSeconds > maxFreshAge,
             bid,
             ask,
         });
@@ -114,17 +140,20 @@ export class DolarTodayProvider extends Provider {
             historical: false,
         }),
         authentication: Object.freeze({apiKey: false}),
+        settingsKeys: Object.freeze(['dolar-today-source']),
         defaultRefreshInterval: 600,
     });
 
     constructor({
         httpClient = null,
         clock = () => Math.floor(Date.now() / 1000),
+        source = DolarTodaySource.FREE_MARKET,
     } = {}) {
         super(DolarTodayProvider.metadata);
         this._httpClient = httpClient ?? new SoupHttpClient();
         this._ownsHttpClient = httpClient === null;
         this._clock = clock;
+        this._source = requireSource(source);
         this._disposed = false;
     }
 
@@ -139,7 +168,7 @@ export class DolarTodayProvider extends Provider {
             return [];
 
         const response = await this._httpClient.get(
-            DOLAR_TODAY_ENDPOINT, cancellable);
+            buildDolarTodayEndpoint(this._source), cancellable);
         let payload = null;
         try {
             payload = JSON.parse(response.body);
@@ -152,7 +181,10 @@ export class DolarTodayProvider extends Provider {
 
         if (response.status < 200 || response.status >= 300)
             throw translateDolarTodayHttpError(response.status, payload);
-        return parseDolarTodayRates(payload, {clock: this._clock});
+        return parseDolarTodayRates(payload, {
+            clock: this._clock,
+            source: this._source,
+        });
     }
 
     dispose() {
@@ -163,5 +195,6 @@ export class DolarTodayProvider extends Provider {
             this._httpClient.dispose();
         this._httpClient = null;
         this._clock = null;
+        this._source = null;
     }
 }

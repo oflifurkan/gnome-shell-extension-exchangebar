@@ -10,6 +10,14 @@
       <default>'xaus'</default>
       <summary>Gold data provider</summary>
     </key>
+    <key name="dolar-today-source" type="s">
+      <choices>
+        <choice value="serbest"/>
+        <choice value="tcmb"/>
+      </choices>
+      <default>'serbest'</default>
+      <summary>DolarToday rate source</summary>
+    </key>
     <key name="refresh-interval" type="u">
       <default>600</default>
       <range min="600" max="3600"/>

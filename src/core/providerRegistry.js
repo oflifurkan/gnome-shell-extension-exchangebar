@@ -5,6 +5,11 @@ function validateMetadata(metadata) {
         throw new TypeError('Provider metadata must contain an id');
     if (typeof metadata.name !== 'string' || metadata.name.length === 0)
         throw new TypeError('Provider metadata must contain a name');
+    const settingsKeys = metadata.settingsKeys ?? [];
+    if (!Array.isArray(settingsKeys) || settingsKeys.some(
+        key => typeof key !== 'string' || key.length === 0)) {
+        throw new TypeError('Provider settings keys must be non-empty strings');
+    }
 }
 
 export class ProviderRegistry {
@@ -23,6 +28,7 @@ export class ProviderRegistry {
             ...metadata,
             capabilities: Object.freeze({...metadata.capabilities}),
             authentication: Object.freeze({...metadata.authentication}),
+            settingsKeys: Object.freeze([...(metadata.settingsKeys ?? [])]),
         });
         this._entries.set(metadata.id, {metadata: frozenMetadata, factory});
     }

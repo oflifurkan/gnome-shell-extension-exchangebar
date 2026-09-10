@@ -249,19 +249,47 @@ export class MarketService {
         this._settingsSignalIds.push(this._settings.connect(
             'changed::refresh-interval',
             () => this._handleRefreshIntervalChange()));
+
+        const connectedKeys = new Set();
+        for (const metadata of this._registry.list()) {
+            for (const key of metadata.settingsKeys) {
+                if (connectedKeys.has(key))
+                    continue;
+                connectedKeys.add(key);
+                this._settingsSignalIds.push(this._settings.connect(
+                    `changed::${key}`,
+                    () => this._handleProviderSettingChange(metadata.id)));
+            }
+        }
     }
 
-    _handleProviderChange() {
+    _handleProviderSettingChange(providerId) {
+        if (this._destroyed)
+            return;
+        const activeProviderIds = new Set([
+            this._settings.get_string('fx-provider'),
+            this._settings.get_string('gold-provider'),
+        ]);
+        if (activeProviderIds.has(providerId))
+            this._handleProviderChange(providerId);
+    }
+
+    _handleProviderChange(recreateProviderId = null) {
         if (this._destroyed)
             return;
         this._cancelRefreshTimer();
-        this._generation++;
+        const generation = ++this._generation;
         this._cancellable?.cancel();
         const pending = this._refreshPromise ?? Promise.resolve();
         void pending.catch(() => {}).finally(() => {
-            if (this._destroyed)
+            if (this._destroyed || generation !== this._generation)
                 return;
             try {
+                if (recreateProviderId &&
+                    this._providers.has(recreateProviderId)) {
+                    this._providers.get(recreateProviderId).dispose();
+                    this._providers.delete(recreateProviderId);
+                }
                 this._configureProviders();
                 void this.refresh();
             } catch (error) {
