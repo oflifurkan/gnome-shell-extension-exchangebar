@@ -1,0 +1,12 @@
+{
+  "name": "ExchangeBar",
+  "description": "Exchange rates and gram-gold prices in the GNOME Shell panel.",
+  "uuid": "exchangebar@oflifurkan",
+  "settings-schema": "org.gnome.shell.extensions.exchangebar",
+  "gettext-domain": "exchangebar",
+  "shell-version": [
+    "50"
+  ],
+  "version": 1,
+  "version-name": "0.1.0"
+}

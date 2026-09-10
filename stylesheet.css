@@ -1,0 +1,32 @@
+.exchangebar-panel-box {
+    spacing: 10px;
+}
+
+.exchangebar-panel-value {
+    font-feature-settings: "tnum";
+}
+
+.exchangebar-menu-title {
+    font-weight: bold;
+}
+
+.exchangebar-quote-row {
+    spacing: 18px;
+}
+
+.exchangebar-quote-name {
+    min-width: 110px;
+}
+
+.exchangebar-quote-value {
+    font-feature-settings: "tnum";
+    font-weight: bold;
+}
+
+.exchangebar-menu-meta {
+    color: rgba(255, 255, 255, 0.65);
+}
+
+.exchangebar-menu-error {
+    color: #f66151;
+}

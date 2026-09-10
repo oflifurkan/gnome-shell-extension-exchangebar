@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.exchangebar"
+          path="/org/gnome/shell/extensions/exchangebar/">
+    <key name="fx-provider" type="s">
+      <default>'fake'</default>
+      <summary>Currency data provider</summary>
+    </key>
+    <key name="gold-provider" type="s">
+      <default>'fake'</default>
+      <summary>Gold data provider</summary>
+    </key>
+    <key name="refresh-interval" type="u">
+      <default>600</default>
+      <range min="600" max="3600"/>
+      <summary>Refresh interval in seconds</summary>
+    </key>
+    <key name="show-usd" type="b">
+      <default>true</default>
+      <summary>Show USD/TRY in the panel</summary>
+    </key>
+    <key name="show-eur" type="b">
+      <default>true</default>
+      <summary>Show EUR/TRY in the panel</summary>
+    </key>
+    <key name="show-gold" type="b">
+      <default>true</default>
+      <summary>Show gram gold in the panel</summary>
+    </key>
+    <key name="currency-precision" type="u">
+      <default>2</default>
+      <range min="0" max="6"/>
+      <summary>Currency decimal places in the panel</summary>
+    </key>
+    <key name="gold-precision" type="u">
+      <default>0</default>
+      <range min="0" max="4"/>
+      <summary>Gold decimal places in the panel</summary>
+    </key>
+  </schema>
+</schemalist>
