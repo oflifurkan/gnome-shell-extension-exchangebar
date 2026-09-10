@@ -13,6 +13,11 @@ const EXPECTED_QUOTES = Object.freeze({
     gold: ['GOLD_GRAM_TRY'],
 });
 
+const CACHED_QUOTES = Object.freeze({
+    fx: ['USDTRY', 'EURTRY'],
+    gold: ['GOLD_GRAM_TRY', 'XAUUSD'],
+});
+
 export const REFRESH_INTERVALS = Object.freeze([600, 900, 1800, 3600]);
 
 export class MarketService {
@@ -21,11 +26,15 @@ export class MarketService {
         registry,
         providerContext = {},
         scheduler = new GlibScheduler(),
+        cache = null,
+        clock = () => Math.floor(Date.now() / 1000),
     }) {
         this._settings = settings;
         this._registry = registry;
         this._providerContext = providerContext;
         this._scheduler = scheduler;
+        this._cache = cache;
+        this._clock = clock;
         this._providers = new Map();
         this._listeners = new Map();
         this._nextListenerId = 1;
@@ -36,6 +45,7 @@ export class MarketService {
         this._refreshPromise = null;
         this._isRefreshing = false;
         this._cancellable = null;
+        this._lifecycleCancellable = new Gio.Cancellable();
         this._timerId = 0;
         this._generation = 0;
         this._destroyed = false;
@@ -85,6 +95,13 @@ export class MarketService {
         this._connectSettings();
         try {
             this._configureProviders();
+            const loadedCache = await this._loadCache();
+            if (this._destroyed)
+                return;
+            if (loadedCache && !this._snapshotNeedsRefresh()) {
+                this._scheduleNextRefresh(this._remainingRefreshDelay());
+                return;
+            }
             await this.refresh();
         } catch (error) {
             if (!this._destroyed) {
@@ -107,6 +124,7 @@ export class MarketService {
         const cancellable = new Gio.Cancellable();
         this._cancellable = cancellable;
         this._isRefreshing = true;
+        this._markAgedQuotesStale();
         this._status = this._snapshot.updatedAt === null ? 'loading' : 'ready';
         this._lastError = null;
 
@@ -154,10 +172,12 @@ export class MarketService {
             this._status = 'ready';
             this._lastError = null;
             this._emitChanged();
+            await this._saveCache(this._snapshot, cancellable);
         } catch (error) {
             if (this._destroyed || generation !== this._generation ||
                 isCancellationError(error))
                 return;
+            this._markAgedQuotesStale();
             this._status = 'error';
             this._lastError = error;
             this._emitChanged();
@@ -266,13 +286,105 @@ export class MarketService {
         return REFRESH_INTERVALS.includes(interval) ? interval : 600;
     }
 
-    _scheduleNextRefresh() {
+    async _loadCache() {
+        if (!this._cache)
+            return false;
+
+        try {
+            const snapshot = await this._cache.load(this._lifecycleCancellable);
+            if (this._destroyed || !snapshot)
+                return false;
+            const cached = this._prepareCachedSnapshot(snapshot);
+            if (cached.updatedAt === null)
+                return false;
+            this._snapshot = cached;
+            this._status = 'ready';
+            this._lastError = null;
+            this._emitChanged();
+            return true;
+        } catch (error) {
+            if (!this._destroyed && !isCancellationError(error))
+                console.warn('ExchangeBar could not load its market cache', error);
+            return false;
+        }
+    }
+
+    _prepareCachedSnapshot(snapshot) {
+        const now = this._clock();
+        const interval = this._getRefreshInterval();
+        const quotes = [];
+        for (const role of ['fx', 'gold']) {
+            const providerId = this._settings.get_string(`${role}-provider`);
+            for (const id of CACHED_QUOTES[role]) {
+                const quote = snapshot.quotes[id];
+                if (!quote || quote.provider !== providerId)
+                    continue;
+                const age = Math.max(0, now - quote.timestamp);
+                quotes.push({
+                    ...quote,
+                    stale: quote.stale || age >= interval,
+                });
+            }
+        }
+        return createMarketSnapshot(quotes, {cached: true});
+    }
+
+    _snapshotNeedsRefresh() {
+        if (this._snapshot.stale)
+            return true;
+        for (const role of ['fx', 'gold']) {
+            const providerId = this._settings.get_string(`${role}-provider`);
+            for (const id of EXPECTED_QUOTES[role]) {
+                if (this._snapshot.quotes[id]?.provider !== providerId)
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    _markAgedQuotesStale() {
+        if (!this._snapshot.cached)
+            return;
+        const now = this._clock();
+        const interval = this._getRefreshInterval();
+        const currentQuotes = Object.values(this._snapshot.quotes);
+        const quotes = currentQuotes.map(quote => ({
+            ...quote,
+            stale: quote.stale || Math.max(0, now - quote.timestamp) >= interval,
+        }));
+        if (quotes.some((quote, index) =>
+            quote.stale !== currentQuotes[index].stale)) {
+            this._snapshot = createMarketSnapshot(quotes, {
+                cached: this._snapshot.cached,
+            });
+        }
+    }
+
+    _remainingRefreshDelay() {
+        if (this._snapshot.updatedAt === null)
+            return this._getRefreshInterval();
+        const age = Math.max(0, this._clock() - this._snapshot.updatedAt);
+        return Math.max(1, this._getRefreshInterval() - age);
+    }
+
+    async _saveCache(snapshot, cancellable) {
+        if (!this._cache)
+            return;
+        try {
+            await this._cache.save(snapshot, cancellable);
+        } catch (error) {
+            if (!this._destroyed && !isCancellationError(error))
+                console.warn('ExchangeBar could not save its market cache', error);
+        }
+    }
+
+    _scheduleNextRefresh(delay = this._getRefreshInterval()) {
         if (this._destroyed || !this._started || this._isRefreshing ||
             this._timerId !== 0)
             return;
 
         this._timerId = this._scheduler.scheduleSeconds(
-            this._getRefreshInterval(),
+            Math.max(1, Math.ceil(delay)),
             () => {
                 this._timerId = 0;
                 void this.refresh();
@@ -307,6 +419,7 @@ export class MarketService {
         this._cancelRefreshTimer();
         this._cancellable?.cancel();
         this._cancellable = null;
+        this._lifecycleCancellable.cancel();
 
         for (const id of this._settingsSignalIds)
             this._settings.disconnect(id);
@@ -320,5 +433,8 @@ export class MarketService {
         this._registry = null;
         this._providerContext = null;
         this._scheduler = null;
+        this._cache = null;
+        this._clock = null;
+        this._lifecycleCancellable = null;
     }
 }

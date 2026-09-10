@@ -1,6 +1,7 @@
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
+import {MarketCache} from './src/core/cache.js';
 import {MarketService} from './src/core/marketService.js';
 import {ProviderRegistry} from './src/core/providerRegistry.js';
 import {FakeProvider} from './src/providers/fakeProvider.js';
@@ -16,7 +17,11 @@ export default class ExchangeBarExtension extends Extension {
         registry.register(XausProvider.metadata,
             context => new XausProvider(context));
 
-        this._marketService = new MarketService({settings, registry});
+        this._marketService = new MarketService({
+            settings,
+            registry,
+            cache: new MarketCache(),
+        });
         this._indicator = new ExchangeBarIndicator(
             this._marketService, settings, this.gettext.bind(this));
 

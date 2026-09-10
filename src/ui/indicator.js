@@ -63,6 +63,10 @@ class ExchangeBarIndicator extends PanelMenu.Button {
             label.text = quote
                 ? formatPanelQuote(item.id, quote.value, precision)
                 : '—';
+            if (quote?.stale)
+                label.add_style_class_name('exchangebar-stale');
+            else
+                label.remove_style_class_name('exchangebar-stale');
         }
         this._menuView.render();
     }

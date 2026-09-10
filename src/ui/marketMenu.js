@@ -102,10 +102,23 @@ export class MarketMenu {
             const providerSuffix = providerIds.size > 1 && quote
                 ? ` · ${this._service.getProviderName(quote.provider)}`
                 : '';
-            row.name.text = `${this._(row.spec.label)}${providerSuffix}`;
+            const staleSuffix = quote?.stale
+                ? ` · ${this._('Stale')}`
+                : '';
+            row.name.text = `${this._(row.spec.label)}${providerSuffix}${staleSuffix}`;
+            if (quote?.stale)
+                row.item.add_style_class_name('exchangebar-stale');
+            else
+                row.item.remove_style_class_name('exchangebar-stale');
         }
 
-        this._updatedItem.label.text = relativeUpdate(snapshot.updatedAt, this._);
+        const stateLabels = [];
+        if (snapshot.cached)
+            stateLabels.push(this._('Cached'));
+        if (snapshot.stale)
+            stateLabels.push(this._('Stale'));
+        stateLabels.push(relativeUpdate(snapshot.updatedAt, this._));
+        this._updatedItem.label.text = stateLabels.join(' · ');
         const providers = [...providerIds]
             .map(id => this._service.getProviderName(id));
         this._providerItem.label.text = providers.length === 1

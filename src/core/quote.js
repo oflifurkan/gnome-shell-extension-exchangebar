@@ -67,7 +67,7 @@ export function normalizeQuote(input) {
     throw new InvalidResponseError('Quote kind is not supported');
 }
 
-export function createMarketSnapshot(quotes) {
+export function createMarketSnapshot(quotes, {cached = false} = {}) {
     const quoteMap = {};
     for (const quote of quotes) {
         const normalized = normalizeQuote(quote);
@@ -83,5 +83,6 @@ export function createMarketSnapshot(quotes) {
             ? Math.min(...values.map(quote => quote.timestamp))
             : null,
         stale: values.some(quote => quote.stale),
+        cached: Boolean(cached),
     });
 }

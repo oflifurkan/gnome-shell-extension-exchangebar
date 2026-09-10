@@ -2,6 +2,12 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
 import {
+    CACHE_VERSION,
+    MarketCache,
+    deserializeMarketCache,
+    serializeMarketCache,
+} from '../src/core/cache.js';
+import {
     ConverterAsset,
     convert,
     convertAll,
@@ -258,6 +264,61 @@ class DeferredProvider extends TestProvider {
     }
 }
 
+class MemoryCache {
+    constructor(snapshot = null, {loadError = null, saveError = null} = {}) {
+        this.snapshot = snapshot;
+        this.loadError = loadError;
+        this.saveError = saveError;
+        this.loadCalls = [];
+        this.saveCalls = [];
+    }
+
+    async load(cancellable) {
+        this.loadCalls.push(cancellable);
+        if (this.loadError)
+            throw this.loadError;
+        return this.snapshot;
+    }
+
+    async save(snapshot, cancellable) {
+        this.saveCalls.push({snapshot, cancellable});
+        if (this.saveError)
+            throw this.saveError;
+        this.snapshot = snapshot;
+    }
+}
+
+class DeferredCache extends MemoryCache {
+    load(cancellable) {
+        this.loadCalls.push(cancellable);
+        return new Promise(resolve => {
+            this.release = resolve;
+        });
+    }
+}
+
+function marketSnapshot({
+    fxProvider = 'fake',
+    goldProvider = fxProvider,
+    timestamp = 1000,
+    stale = false,
+} = {}) {
+    return createMarketSnapshot([
+        createCurrencyQuote({
+            id: 'USDTRY', base: 'USD', quote: 'TRY', value: 48.47,
+            timestamp, provider: fxProvider, stale,
+        }),
+        createCurrencyQuote({
+            id: 'EURTRY', base: 'EUR', quote: 'TRY', value: 56.37,
+            timestamp, provider: fxProvider, stale,
+        }),
+        createCommodityQuote({
+            id: 'GOLD_GRAM_TRY', asset: 'GOLD', currency: 'TRY', unit: 'GRAM',
+            value: 5421, timestamp, provider: goldProvider, stale,
+        }),
+    ], {cached: true});
+}
+
 await test('quote factories preserve normalized, unit-aware data', () => {
     const currency = createCurrencyQuote({
         id: 'USDTRY', base: 'USD', quote: 'TRY', value: 48.47,
@@ -283,6 +344,55 @@ await test('quote factories reject invalid values and duplicate IDs', () => {
         timestamp: 1000, provider: 'fake', stale: false,
     });
     assertThrows(() => createMarketSnapshot([quote, quote]), InvalidResponseError);
+});
+
+await test('market cache serialization is versioned and validates quotes', () => {
+    const snapshot = marketSnapshot();
+    const serialized = serializeMarketCache(snapshot, 1200);
+    const payload = JSON.parse(serialized);
+    assertEqual(payload.version, CACHE_VERSION);
+    assertEqual(payload.savedAt, 1200);
+    assertEqual(payload.quotes.USDTRY.value, 48.47);
+
+    const restored = deserializeMarketCache(serialized);
+    assert(restored.cached);
+    assertEqual(restored.quotes.GOLD_GRAM_TRY.unit, 'GRAM');
+    assertEqual(deserializeMarketCache('{broken'), null);
+    assertEqual(deserializeMarketCache(JSON.stringify({
+        version: CACHE_VERSION + 1,
+        savedAt: 1200,
+        quotes: payload.quotes,
+    })), null);
+    assertEqual(deserializeMarketCache(JSON.stringify({
+        version: CACHE_VERSION,
+        savedAt: 'invalid',
+        quotes: payload.quotes,
+    })), null);
+    payload.quotes.USDTRY.id = 'WRONG';
+    assertEqual(deserializeMarketCache(JSON.stringify(payload)), null);
+    assertThrows(() => serializeMarketCache(snapshot, -1), TypeError);
+});
+
+await test('market cache performs an asynchronous Gio disk round trip', async () => {
+    const directoryPath = GLib.dir_make_tmp('exchangebar-cache-test-XXXXXX');
+    const path = GLib.build_filenamev([directoryPath, 'market.json']);
+    const file = Gio.File.new_for_path(path);
+    const directory = Gio.File.new_for_path(directoryPath);
+    try {
+        const cache = new MarketCache({path, clock: () => 1200});
+        assertEqual(await cache.load(), null);
+        await cache.save(marketSnapshot());
+        const restored = await cache.load();
+        assert(restored.cached);
+        assertEqual(restored.quotes.USDTRY.value, 48.47);
+    } finally {
+        try {
+            file.delete(null);
+        } catch (_error) {
+            // The file is absent when setup failed before the write.
+        }
+        directory.delete(null);
+    }
 });
 
 await test('registry creates providers and filters capabilities', () => {
@@ -443,6 +553,146 @@ await test('provider setting changes replace and dispose providers', async () =>
         'Gold provider was not replaced');
     assert(oldProvider.disposed);
     service.destroy();
+});
+
+await test('fresh cache is shown without an immediate provider request', async () => {
+    const tracker = [];
+    let now = 1000;
+    const scheduler = new FakeScheduler();
+    const registry = new ProviderRegistry();
+    registry.register(testMetadata('cached'),
+        () => new TestProvider('cached', tracker, {fail: true}));
+    const cache = new MemoryCache(marketSnapshot({
+        fxProvider: 'cached',
+        timestamp: 800,
+    }));
+    const service = new MarketService({
+        settings: new FakeSettings({
+            'fx-provider': 'cached',
+            'gold-provider': 'cached',
+        }),
+        registry,
+        scheduler,
+        cache,
+        clock: () => now,
+    });
+    await service.start();
+    assertEqual(tracker.length, 0);
+    assertEqual(service.status, 'ready');
+    assert(service.getSnapshot().cached);
+    assert(!service.getSnapshot().stale);
+    assertEqual(scheduler.scheduled[0].delay, 400);
+
+    now = 1400;
+    scheduler.fire(scheduler.scheduled[0].id);
+    await waitFor(() => service.status === 'error',
+        'Due cache refresh did not fail');
+    assert(service.getSnapshot().stale);
+    assertEqual(service.getQuote('USDTRY').value, 48.47);
+    service.destroy();
+});
+
+await test('stale cache remains visible when its refresh fails', async () => {
+    const tracker = [];
+    const scheduler = new FakeScheduler();
+    const registry = new ProviderRegistry();
+    registry.register(testMetadata('offline'),
+        () => new TestProvider('offline', tracker, {fail: true}));
+    const cache = new MemoryCache(marketSnapshot({
+        fxProvider: 'offline',
+        timestamp: 400,
+    }));
+    const service = new MarketService({
+        settings: new FakeSettings({
+            'fx-provider': 'offline',
+            'gold-provider': 'offline',
+        }),
+        registry,
+        scheduler,
+        cache,
+        clock: () => 1000,
+    });
+    await service.start();
+    assertEqual(tracker.length, 1);
+    assertEqual(service.status, 'error');
+    assert(service.getSnapshot().cached);
+    assert(service.getSnapshot().stale);
+    assertEqual(service.getQuote('USDTRY').value, 48.47);
+    assertEqual(cache.saveCalls.length, 0);
+    assertEqual(scheduler.active.size, 1);
+    service.destroy();
+});
+
+await test('cache filters quotes that do not match selected providers', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(testMetadata('selected-fx'),
+        () => new TestProvider('selected-fx', []));
+    registry.register(testMetadata('selected-gold'),
+        () => new TestProvider('selected-gold', [], {fail: true}));
+    const cache = new MemoryCache(marketSnapshot({
+        fxProvider: 'selected-fx',
+        goldProvider: 'old-gold',
+        timestamp: 900,
+    }));
+    const service = new MarketService({
+        settings: new FakeSettings({
+            'fx-provider': 'selected-fx',
+            'gold-provider': 'selected-gold',
+        }),
+        registry,
+        cache,
+        clock: () => 1000,
+    });
+    await service.start();
+    assertEqual(service.status, 'error');
+    assertEqual(service.getQuote('USDTRY').provider, 'selected-fx');
+    assertEqual(service.getQuote('GOLD_GRAM_TRY'), null);
+    service.destroy();
+});
+
+await test('successful refresh replaces cache without caching failures', async () => {
+    const cache = new MemoryCache();
+    const service = new MarketService({
+        settings: new FakeSettings(),
+        registry: createRegistry(),
+        cache,
+    });
+    await service.start();
+    assertEqual(cache.saveCalls.length, 1);
+    assertEqual(Object.keys(cache.snapshot.quotes).length, 3);
+    assert(!cache.snapshot.cached);
+    service.destroy();
+});
+
+await test('cache write failures do not invalidate live quotes', async () => {
+    const cache = new MemoryCache(null, {
+        saveError: new Error('Test cache write failure'),
+    });
+    const service = new MarketService({
+        settings: new FakeSettings(),
+        registry: createRegistry(),
+        cache,
+    });
+    await service.start();
+    assertEqual(service.status, 'ready');
+    assertEqual(service.getQuote('USDTRY').value, 48.47);
+    service.destroy();
+});
+
+await test('destroy cancels a pending cache load and ignores its result', async () => {
+    const cache = new DeferredCache();
+    const service = new MarketService({
+        settings: new FakeSettings(),
+        registry: createRegistry(),
+        cache,
+        clock: () => 1000,
+    });
+    const startPromise = service.start();
+    await waitFor(() => cache.release, 'Cache load did not begin');
+    service.destroy();
+    assert(cache.loadCalls[0].is_cancelled());
+    cache.release(marketSnapshot({timestamp: 900}));
+    await startPromise;
 });
 
 await test('panel formatter uses instrument prefixes and precision', () => {

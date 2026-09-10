@@ -48,7 +48,10 @@ and never access provider payloads. Currency and gold provider IDs are stored
 independently so later releases can mix data sources. Converter mathematics
 also consume only normalized quotes and have no dependency on Shell UI code.
 Market data refreshes ten minutes after each completed update attempt, and the
-popup provides a manual refresh action that resets that countdown.
+popup provides a manual refresh action that resets that countdown. Successful
+snapshots are cached under the user's XDG cache directory. A compatible cached
+snapshot is shown immediately after startup; stale values remain available and
+are visually distinguished while ExchangeBar retries in the background.
 
 ## Test XAUS
 

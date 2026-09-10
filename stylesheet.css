@@ -6,6 +6,10 @@
     font-feature-settings: "tnum";
 }
 
+.exchangebar-stale {
+    opacity: 0.55;
+}
+
 .exchangebar-menu-title {
     font-weight: bold;
 }
