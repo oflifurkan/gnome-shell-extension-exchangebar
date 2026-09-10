@@ -3,6 +3,7 @@ import St from 'gi://St';
 
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
+import {ConverterView} from './converterView.js';
 import {formatTry} from './format.js';
 
 const QUOTE_ROWS = Object.freeze([
@@ -68,6 +69,12 @@ export class MarketMenu {
         this._errorItem = new PopupMenu.PopupMenuItem('', {reactive: false});
         this._errorItem.label.add_style_class_name('exchangebar-menu-error');
         menu.addMenuItem(this._errorItem);
+
+        menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        const converterItem = new PopupMenu.PopupBaseMenuItem({reactive: false});
+        this._converterView = new ConverterView(_);
+        converterItem.add_child(this._converterView.actor);
+        menu.addMenuItem(converterItem);
     }
 
     render() {
@@ -99,9 +106,12 @@ export class MarketMenu {
             ? this._('Unable to update: %s')
                 .replace('%s', this._service.lastError.message)
             : '';
+        this._converterView.render(snapshot.quotes);
     }
 
     destroy() {
+        this._converterView.destroy();
+        this._converterView = null;
         this._rows.clear();
         this._menu = null;
         this._service = null;

@@ -15,6 +15,11 @@ export class ProviderUnavailableError extends ExchangeBarError {}
 
 export class CancellationError extends ExchangeBarError {}
 
+export class ConversionError extends ExchangeBarError {}
+export class InvalidAmountError extends ConversionError {}
+export class UnsupportedAssetError extends ConversionError {}
+export class MissingQuoteError extends ConversionError {}
+
 export function isCancellationError(error) {
     return error instanceof CancellationError ||
         error?.matches?.(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED) === true;

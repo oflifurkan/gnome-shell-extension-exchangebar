@@ -30,3 +30,42 @@
 .exchangebar-menu-error {
     color: #f66151;
 }
+
+.exchangebar-converter {
+    min-width: 260px;
+    spacing: 8px;
+}
+
+.exchangebar-converter-title {
+    font-weight: bold;
+}
+
+.exchangebar-converter-sources {
+    spacing: 4px;
+}
+
+.exchangebar-converter-source {
+    padding: 5px 7px;
+}
+
+.exchangebar-converter-source:checked {
+    background-color: rgba(255, 255, 255, 0.18);
+}
+
+.exchangebar-converter-input-row,
+.exchangebar-converter-result {
+    spacing: 12px;
+}
+
+.exchangebar-converter-input {
+    width: 120px;
+}
+
+.exchangebar-converter-result-value {
+    font-feature-settings: "tnum";
+    font-weight: bold;
+}
+
+.exchangebar-converter-message {
+    color: #f66151;
+}
