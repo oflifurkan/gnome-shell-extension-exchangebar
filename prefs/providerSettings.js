@@ -4,7 +4,7 @@ export function createProviderSettingsGroup(_) {
     const group = new Adw.PreferencesGroup({title: _('Data Sources')});
     group.add(new Adw.ActionRow({
         title: _('Currency provider'),
-        subtitle: _('Fake Provider'),
+        subtitle: _('DolarToday'),
     }));
     group.add(new Adw.ActionRow({
         title: _('Gold provider'),

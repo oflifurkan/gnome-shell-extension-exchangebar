@@ -1,0 +1,28 @@
+{
+  "success": true,
+  "base": "TRY",
+  "count": 2,
+  "updated_at": "2026-09-10T20:45:02+03:00",
+  "rates": {
+    "USD": {
+      "code": "USD",
+      "name": "Amerikan Doları",
+      "type": "forex",
+      "buy": 48.417265,
+      "sell": 48.562735,
+      "change_pct": 0.0413,
+      "source": "serbest",
+      "updated_at": "2026-09-10T20:45:02+03:00"
+    },
+    "EUR": {
+      "code": "EUR",
+      "name": "Euro",
+      "type": "forex",
+      "buy": 56.270545,
+      "sell": 56.439611,
+      "change_pct": -0.0877,
+      "source": "serbest",
+      "updated_at": "2026-09-10T20:45:02+03:00"
+    }
+  }
+}

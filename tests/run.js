@@ -26,6 +26,13 @@ import {
 import {MarketService, REFRESH_INTERVALS} from '../src/core/marketService.js';
 import {ProviderRegistry} from '../src/core/providerRegistry.js';
 import {createCommodityQuote, createCurrencyQuote, createMarketSnapshot} from '../src/core/quote.js';
+import {
+    DOLAR_TODAY_ENDPOINT,
+    MAX_FX_FRESH_AGE_SECONDS,
+    DolarTodayProvider,
+    parseDolarTodayRates,
+    translateDolarTodayHttpError,
+} from '../src/providers/dolarToday.js';
 import {FakeProvider} from '../src/providers/fakeProvider.js';
 import {SoupHttpClient} from '../src/providers/httpClient.js';
 import {
@@ -174,14 +181,18 @@ function createRegistry(clock = () => 1000) {
     return registry;
 }
 
-function loadJsonFixture(path) {
+function loadTextFixture(path) {
     const filename = GLib.build_filenamev([
         GLib.get_current_dir(), 'tests', 'fixtures', ...path.split('/'),
     ]);
     const [success, contents] = GLib.file_get_contents(filename);
     if (!success)
         throw new Error(`Unable to read fixture ${filename}`);
-    return JSON.parse(new TextDecoder().decode(contents));
+    return new TextDecoder().decode(contents);
+}
+
+function loadJsonFixture(path) {
+    return JSON.parse(loadTextFixture(path));
 }
 
 function clone(value) {
@@ -774,6 +785,145 @@ await test('converter reports missing quotes and unsupported assets', () => {
     InvalidAmountError);
 });
 
+const DOLAR_TODAY_FIXTURE_TIME = Math.floor(
+    Date.parse('2026-09-10T20:50:02+03:00') / 1000);
+
+await test('DolarToday parser normalizes selling prices and bid/ask', () => {
+    const quotes = parseDolarTodayRates(
+        loadJsonFixture('dolar-today/rates-fresh.json'),
+        {clock: () => DOLAR_TODAY_FIXTURE_TIME});
+    assertEqual(quotes.length, 2);
+
+    const usd = quotes.find(quote => quote.id === 'USDTRY');
+    assertEqual(usd.base, 'USD');
+    assertEqual(usd.quote, 'TRY');
+    assertEqual(usd.value, 48.562735);
+    assertEqual(usd.bid, 48.417265);
+    assertEqual(usd.ask, 48.562735);
+    assertEqual(usd.provider, 'dolar-today');
+    assertEqual(usd.stale, false);
+
+    const eur = quotes.find(quote => quote.id === 'EURTRY');
+    assertEqual(eur.value, 56.439611);
+    assertEqual(eur.bid, 56.270545);
+    assertEqual(eur.ask, 56.439611);
+    assertEqual(eur.timestamp, Math.floor(
+        Date.parse('2026-09-10T20:45:02+03:00') / 1000));
+    assertClose(convert(
+        1, ConverterAsset.EUR, ConverterAsset.TRY,
+        createMarketSnapshot(quotes).quotes), 56.439611);
+});
+
+await test('DolarToday parser detects stale rates from source timestamps', () => {
+    const stale = parseDolarTodayRates(
+        loadJsonFixture('dolar-today/rates-stale.json'),
+        {clock: () => DOLAR_TODAY_FIXTURE_TIME});
+    assert(stale.every(quote => quote.stale));
+
+    const boundaryPayload = loadJsonFixture('dolar-today/rates-fresh.json');
+    const timestamp = Math.floor(Date.parse(
+        boundaryPayload.updated_at) / 1000);
+    const boundary = parseDolarTodayRates(boundaryPayload, {
+        clock: () => timestamp + MAX_FX_FRESH_AGE_SECONDS,
+    });
+    assert(boundary.every(quote => !quote.stale));
+    const expired = parseDolarTodayRates(boundaryPayload, {
+        clock: () => timestamp + MAX_FX_FRESH_AGE_SECONDS + 1,
+    });
+    assert(expired.every(quote => quote.stale));
+});
+
+await test('DolarToday parser rejects unavailable and malformed rates', () => {
+    assertThrows(() => parseDolarTodayRates(
+        loadJsonFixture('dolar-today/unavailable.json')),
+    ProviderUnavailableError);
+    assertThrows(() => parseDolarTodayRates(
+        loadJsonFixture('dolar-today/incomplete.json'),
+    {clock: () => DOLAR_TODAY_FIXTURE_TIME}), InvalidResponseError);
+
+    const valid = loadJsonFixture('dolar-today/rates-fresh.json');
+    for (const mutate of [
+        value => value.base = 'USD',
+        value => value.rates.USD.code = 'EUR',
+        value => value.rates.USD.type = 'metal',
+        value => value.rates.USD.source = 'tcmb',
+        value => value.rates.USD.buy = 0,
+        value => value.rates.USD.sell = -1,
+        value => value.rates.USD.updated_at = 'not-a-date',
+    ]) {
+        const payload = clone(valid);
+        mutate(payload);
+        assertThrows(() => parseDolarTodayRates(
+            payload, {clock: () => DOLAR_TODAY_FIXTURE_TIME}),
+        InvalidResponseError);
+    }
+    assertThrows(() => parseDolarTodayRates(valid, {clock: () => 0}), TypeError);
+});
+
+await test('DolarToday HTTP errors map to common provider errors', () => {
+    assert(translateDolarTodayHttpError(400) instanceof InvalidResponseError);
+    assert(translateDolarTodayHttpError(404) instanceof InvalidResponseError);
+    assert(translateDolarTodayHttpError(422) instanceof InvalidResponseError);
+    assert(translateDolarTodayHttpError(429) instanceof RateLimitError);
+    assert(translateDolarTodayHttpError(503) instanceof ProviderUnavailableError);
+    assert(translateDolarTodayHttpError(418) instanceof NetworkError);
+});
+
+await test('DolarToday provider performs one keyless cancellable request', async () => {
+    const httpClient = new StubHttpClient({
+        status: 200,
+        body: JSON.stringify(
+            loadJsonFixture('dolar-today/rates-fresh.json')),
+    });
+    const provider = new DolarTodayProvider({
+        httpClient,
+        clock: () => DOLAR_TODAY_FIXTURE_TIME,
+    });
+    assert(provider.metadata.capabilities.currencies);
+    assert(provider.metadata.capabilities.bidAsk);
+    assert(!provider.metadata.capabilities.metals);
+    assert(!provider.metadata.authentication.apiKey);
+    const cancellable = new Gio.Cancellable();
+    const quotes = await provider.fetchQuotes({fx: true}, cancellable);
+    assertEqual(quotes.length, 2);
+    assertEqual(httpClient.calls.length, 1);
+    assertEqual(httpClient.calls[0].url, DOLAR_TODAY_ENDPOINT);
+    assert(httpClient.calls[0].cancellable === cancellable);
+    assertEqual((await provider.fetchQuotes({})).length, 0);
+    assertEqual(httpClient.calls.length, 1);
+    await assertRejects(() => provider.fetchQuotes({gold: true}),
+        ProviderUnavailableError);
+    provider.dispose();
+    provider.dispose();
+    await assertRejects(() => provider.fetchQuotes({fx: true}),
+        ProviderUnavailableError);
+});
+
+await test('DolarToday provider translates malformed and failed responses', async () => {
+    const malformed = new DolarTodayProvider({
+        httpClient: new StubHttpClient({
+            status: 200,
+            body: loadTextFixture('dolar-today/malformed.txt'),
+        }),
+    });
+    await assertRejects(() => malformed.fetchQuotes({fx: true}),
+        InvalidResponseError);
+    malformed.dispose();
+
+    const unavailable = new DolarTodayProvider({
+        httpClient: new StubHttpClient({
+            status: 503,
+            body: JSON.stringify(
+                loadJsonFixture('dolar-today/unavailable.json')),
+        }),
+    });
+    const error = await assertRejects(
+        () => unavailable.fetchQuotes({fx: true}),
+        ProviderUnavailableError);
+    assertEqual(error.message, 'Rates are temporarily unavailable');
+    unavailable.dispose();
+});
+
 const XAUS_FIXTURE_TIME = Math.floor(
     Date.parse('2026-09-10T15:00:20.000Z') / 1000);
 
@@ -909,6 +1059,45 @@ await test('market service combines Fake FX with XAUS gold', async () => {
     assertEqual(service.getQuote('USDTRY').provider, 'fake');
     assertEqual(service.getQuote('GOLD_GRAM_TRY').provider, 'xaus');
     assertEqual(service.getQuote('XAUUSD').provider, 'xaus');
+    service.destroy();
+});
+
+await test('market service replaces Fake cache with DolarToday and XAUS', async () => {
+    const registry = new ProviderRegistry();
+    registry.register(DolarTodayProvider.metadata,
+        () => new DolarTodayProvider({
+            httpClient: new StubHttpClient({
+                status: 200,
+                body: JSON.stringify(
+                    loadJsonFixture('dolar-today/rates-fresh.json')),
+            }),
+            clock: () => DOLAR_TODAY_FIXTURE_TIME,
+        }));
+    registry.register(XausProvider.metadata, () => new XausProvider({
+        httpClient: new StubHttpClient({
+            status: 200,
+            body: JSON.stringify(loadJsonFixture('xaus/spot-fresh.json')),
+        }),
+        clock: () => XAUS_FIXTURE_TIME,
+    }));
+    const cache = new MemoryCache(marketSnapshot({timestamp: 1000}));
+    const service = new MarketService({
+        settings: new FakeSettings({
+            'fx-provider': 'dolar-today',
+            'gold-provider': 'xaus',
+        }),
+        registry,
+        cache,
+        clock: () => DOLAR_TODAY_FIXTURE_TIME,
+    });
+    await service.start();
+    assertEqual(service.status, 'ready');
+    assertEqual(service.getQuote('USDTRY').provider, 'dolar-today');
+    assertEqual(service.getQuote('EURTRY').value, 56.439611);
+    assertEqual(service.getQuote('GOLD_GRAM_TRY').provider, 'xaus');
+    assertEqual(service.getQuote('XAUUSD').provider, 'xaus');
+    assertEqual(cache.saveCalls.length, 1);
+    assert(!cache.snapshot.cached);
     service.destroy();
 });
 

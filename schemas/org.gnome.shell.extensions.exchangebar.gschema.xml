@@ -3,7 +3,7 @@
   <schema id="org.gnome.shell.extensions.exchangebar"
           path="/org/gnome/shell/extensions/exchangebar/">
     <key name="fx-provider" type="s">
-      <default>'fake'</default>
+      <default>'dolar-today'</default>
       <summary>Currency data provider</summary>
     </key>
     <key name="gold-provider" type="s">
