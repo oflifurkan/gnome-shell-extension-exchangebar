@@ -2,6 +2,8 @@ import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
 import Gtk from 'gi://Gtk';
 
+import {addChoiceRow} from './choiceRow.js';
+import {PANEL_POSITION_CHOICES} from './choices.js';
 import {createProviderSettingsPage} from './providerSettings.js';
 
 function addSwitch(group, settings, key, title) {
@@ -44,6 +46,18 @@ export function fillPreferencesWindow(window, settings, metadata, _) {
         title: _('Appearance'),
         icon_name: 'preferences-desktop-appearance-symbolic',
     });
+    const placementGroup = new Adw.PreferencesGroup({title: _('Panel')});
+    addChoiceRow({
+        group: placementGroup,
+        settings,
+        key: 'panel-position',
+        title: 'Panel position',
+        choices: PANEL_POSITION_CHOICES,
+        _,
+        addCleanup,
+    });
+    appearancePage.add(placementGroup);
+
     const panelGroup = new Adw.PreferencesGroup({title: _('Panel items')});
     addSwitch(panelGroup, settings, 'show-usd', _('USD / TRY'));
     addSwitch(panelGroup, settings, 'show-eur', _('EUR / TRY'));

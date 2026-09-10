@@ -75,5 +75,6 @@ dconf write /org/gnome/shell/extensions/exchangebar/gold-provider "'fake'"
 
 The preferences window provides the same FX and gold provider selectors,
 10/15/30/60-minute refresh intervals, instrument visibility, decimal precision,
-and a DolarToday source selector for Free Market or TCMB rates. Changes take
-effect while the extension is running; restarting GNOME Shell is not required.
+panel placement on the right or in the center beside the clock, and a
+DolarToday source selector for Free Market or TCMB rates. Changes take effect
+while the extension is running; restarting GNOME Shell is not required.

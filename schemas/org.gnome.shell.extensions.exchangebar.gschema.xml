@@ -23,6 +23,14 @@
       <range min="600" max="3600"/>
       <summary>Refresh interval in seconds</summary>
     </key>
+    <key name="panel-position" type="s">
+      <choices>
+        <choice value="right"/>
+        <choice value="center"/>
+      </choices>
+      <default>'right'</default>
+      <summary>Panel position</summary>
+    </key>
     <key name="show-usd" type="b">
       <default>true</default>
       <summary>Show USD/TRY in the panel</summary>

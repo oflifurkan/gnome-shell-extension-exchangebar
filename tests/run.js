@@ -14,6 +14,7 @@ import {
     parseAmount,
 } from '../src/core/converter.js';
 import {
+    PANEL_POSITION_CHOICES,
     REFRESH_INTERVAL_CHOICES,
     findChoiceIndex,
     getChoiceValue,
@@ -56,6 +57,7 @@ import {
     translateXausHttpError,
 } from '../src/providers/xaus.js';
 import {formatPanelQuote} from '../src/ui/format.js';
+import {PanelPosition, getPanelPlacement} from '../src/ui/panelPlacement.js';
 
 let passed = 0;
 
@@ -460,6 +462,21 @@ await test('preference choice mapping preserves stable stored values', () => {
     assertEqual(getChoiceValue(REFRESH_INTERVAL_CHOICES, 3), 3600);
     assertThrows(() => getChoiceValue(REFRESH_INTERVAL_CHOICES, -1), RangeError);
     assertThrows(() => getChoiceValue(REFRESH_INTERVAL_CHOICES, 4), RangeError);
+    assertEqual(findChoiceIndex(PANEL_POSITION_CHOICES, 'center'), 1);
+    assertEqual(getChoiceValue(PANEL_POSITION_CHOICES, 0), 'right');
+});
+
+await test('panel placement maps settings to public panel boxes', () => {
+    const right = getPanelPlacement(PanelPosition.RIGHT);
+    assertEqual(right.box, 'right');
+    assertEqual(right.position, 0);
+
+    const center = getPanelPlacement(PanelPosition.CENTER);
+    assertEqual(center.box, 'center');
+    assertEqual(center.position, -1);
+
+    assert(getPanelPlacement('unsupported') === right,
+        'Unknown values should use the safe right-side fallback');
 });
 
 await test('fake provider returns exact normalized quotes', async () => {

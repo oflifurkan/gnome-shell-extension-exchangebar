@@ -5,6 +5,11 @@ export const REFRESH_INTERVAL_CHOICES = Object.freeze([
     Object.freeze({value: 3600, label: '60 minutes'}),
 ]);
 
+export const PANEL_POSITION_CHOICES = Object.freeze([
+    Object.freeze({value: 'right', label: 'Right'}),
+    Object.freeze({value: 'center', label: 'Center — Beside Clock'}),
+]);
+
 export function findChoiceIndex(choices, value) {
     return choices.findIndex(choice => choice.value === value);
 }
