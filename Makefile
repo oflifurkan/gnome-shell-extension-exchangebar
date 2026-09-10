@@ -2,7 +2,7 @@ UUID := exchangebar@oflifurkan
 SCHEMA := schemas/org.gnome.shell.extensions.exchangebar.gschema.xml
 DIST := dist
 
-.PHONY: all schemas test check pack install clean
+.PHONY: all schemas test test-xaus check pack install clean
 
 all: check
 
@@ -11,6 +11,9 @@ schemas:
 
 test:
 	gjs -m tests/run.js
+
+test-xaus:
+	gjs -m tests/xaus.live.js
 
 check: test
 	jq empty metadata.json

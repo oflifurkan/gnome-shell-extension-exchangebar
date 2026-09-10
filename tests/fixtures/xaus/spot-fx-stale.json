@@ -1,0 +1,18 @@
+{
+  "xau": {
+    "price": 5901.125,
+    "currency": "TRY",
+    "unit": "gram"
+  },
+  "spot_usd_oz": 4410.5,
+  "updated_at": "2026-09-10T15:00:20.000Z",
+  "price_as_of": "2026-09-10T15:00:00.000Z",
+  "stale": false,
+  "fx_stale": true,
+  "data_state": {
+    "status": "fresh",
+    "as_of": "2026-09-10T15:00:00.000Z",
+    "source": "upstream",
+    "age_seconds": 20
+  }
+}

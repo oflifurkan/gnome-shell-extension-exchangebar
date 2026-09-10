@@ -1,6 +1,10 @@
 import Gio from 'gi://Gio';
 
-import {InvalidResponseError, isCancellationError} from './errors.js';
+import {
+    InvalidResponseError,
+    ProviderUnavailableError,
+    isCancellationError,
+} from './errors.js';
 import {createMarketSnapshot} from './quote.js';
 
 const EXPECTED_QUOTES = Object.freeze({
@@ -153,10 +157,29 @@ export class MarketService {
     }
 
     _configureProviders() {
-        const requiredIds = new Set([
-            this._settings.get_string('fx-provider'),
-            this._settings.get_string('gold-provider'),
-        ]);
+        const selections = [
+            {
+                role: 'fx',
+                id: this._settings.get_string('fx-provider'),
+                capability: 'currencies',
+            },
+            {
+                role: 'gold',
+                id: this._settings.get_string('gold-provider'),
+                capability: 'metals',
+            },
+        ];
+        for (const selection of selections) {
+            const metadata = this._registry.getMetadata(selection.id);
+            if (!metadata)
+                throw new ProviderUnavailableError(
+                    `Provider "${selection.id}" is not available`);
+            if (!metadata.capabilities[selection.capability]) {
+                throw new ProviderUnavailableError(
+                    `Provider "${selection.id}" cannot supply ${selection.role} quotes`);
+            }
+        }
+        const requiredIds = new Set(selections.map(selection => selection.id));
 
         for (const [id, provider] of this._providers) {
             if (!requiredIds.has(id)) {

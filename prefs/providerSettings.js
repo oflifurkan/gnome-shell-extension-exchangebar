@@ -8,7 +8,7 @@ export function createProviderSettingsGroup(_) {
     }));
     group.add(new Adw.ActionRow({
         title: _('Gold provider'),
-        subtitle: _('Fake Provider'),
+        subtitle: _('XAUS'),
     }));
     group.add(new Adw.ActionRow({
         title: _('Refresh interval'),

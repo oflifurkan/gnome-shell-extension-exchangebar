@@ -1,0 +1,9 @@
+{
+  "error": "Upstream price source unreachable",
+  "data_state": {
+    "status": "unavailable",
+    "as_of": null,
+    "source": "unavailable",
+    "age_seconds": null
+  }
+}

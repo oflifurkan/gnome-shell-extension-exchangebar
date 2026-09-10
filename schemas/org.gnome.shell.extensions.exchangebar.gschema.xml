@@ -7,7 +7,7 @@
       <summary>Currency data provider</summary>
     </key>
     <key name="gold-provider" type="s">
-      <default>'fake'</default>
+      <default>'xaus'</default>
       <summary>Gold data provider</summary>
     </key>
     <key name="refresh-interval" type="u">

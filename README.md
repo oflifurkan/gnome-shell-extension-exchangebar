@@ -4,8 +4,10 @@ ExchangeBar is a GNOME Shell 50 extension that displays USD/TRY, EUR/TRY, and
 gram-gold/TRY prices in the top panel.
 
 Version 0.1 is being built incrementally. The current implementation contains
-the extension shell and a provider-independent market pipeline backed by a
-deterministic fake provider. It does not make network requests yet.
+the extension shell, a provider-independent market pipeline, and an offline
+converter for TRY, USD, EUR, and gold grams. Currency values currently come
+from the deterministic Fake Provider; gram gold comes from the keyless XAUS
+spot API.
 
 ## Requirements
 
@@ -43,4 +45,21 @@ extension, then enable `exchangebar@oflifurkan` with Extensions or the
 Providers return only normalized ExchangeBar quotes. `MarketService` owns
 provider instances and market state; the panel and popup consume that service
 and never access provider payloads. Currency and gold provider IDs are stored
-independently so later releases can mix data sources.
+independently so later releases can mix data sources. Converter mathematics
+also consume only normalized quotes and have no dependency on Shell UI code.
+
+## Test XAUS
+
+XAUS is free and keyless. An optional live provider check is available:
+
+```sh
+make test-xaus
+```
+
+XAUS is the default gold provider. To switch between live and deterministic
+gold data during development:
+
+```sh
+dconf write /org/gnome/shell/extensions/exchangebar/gold-provider "'xaus'"
+dconf write /org/gnome/shell/extensions/exchangebar/gold-provider "'fake'"
+```
