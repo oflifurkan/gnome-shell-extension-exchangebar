@@ -14,13 +14,17 @@ keyless XAUS spot API.
 - GNOME Shell 50
 - GJS with modern ES-module support
 - GTK 4 and Libadwaita (preferences)
-- `glib-compile-schemas`, `jq`, and `xmllint` for development checks
+- `glib-compile-schemas`, `jq`, `xmllint`, `zip`, and `unzip` for development
+  checks and packaging
+- Node.js and npm for ESLint
+- Xvfb for the headless preferences smoke test
 
 ## Develop
 
 Run all tests and validation:
 
 ```sh
+npm ci
 make check
 ```
 
@@ -78,3 +82,30 @@ The preferences window provides the same FX and gold provider selectors,
 panel placement on the right or in the center beside the clock, and a
 DolarToday source selector for Free Market or TCMB rates. Changes take effect
 while the extension is running; restarting GNOME Shell is not required.
+
+## Continuous integration
+
+GitHub Actions runs ESLint, the GJS unit tests, strict metadata and schema
+validation, a headless GTK/Libadwaita preferences smoke test, and extension
+packaging for pull requests and pushes to `main`. Successful builds are kept as
+downloadable workflow artifacts for 14 days. Live provider checks remain
+manual so an external service outage cannot block a build.
+
+## Release
+
+Releases use stable semantic tags and must come from `main`. To publish a
+release:
+
+1. Update `version-name` in `metadata.json`, for example to `0.2.0`.
+2. Merge and push that change to `main`, then wait for CI to pass.
+3. Create and push the matching tag:
+
+   ```sh
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+The tag workflow rejects malformed tags, version mismatches, and commits that
+are not part of `main`. A valid tag publishes a GitHub Release with generated
+notes, a versioned `.shell-extension.zip`, and its SHA-256 checksum. It does not
+publish to extensions.gnome.org.

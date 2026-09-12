@@ -1,4 +1,5 @@
 /dist/
+/node_modules/
 /schemas/gschemas.compiled
 *.shell-extension.zip
 *.syscap

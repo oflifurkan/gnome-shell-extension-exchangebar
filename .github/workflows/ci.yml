@@ -1,0 +1,103 @@
+name: CI and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: exchangebar-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  build:
+    name: Validate and package
+    runs-on: ubuntu-latest
+    container: fedora:44
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+      asset_name: ${{ steps.package.outputs.asset_name }}
+    steps:
+      - name: Install GNOME 50 and build dependencies
+        run: >-
+          dnf install --assumeyes --setopt=install_weak_deps=False
+          git glib2 gjs gnome-shell gtk4 jq libadwaita libxml2 make
+          nodejs npm unzip xorg-x11-server-Xvfb zip
+
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install locked JavaScript dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Validate release tag
+        if: github.ref_type == 'tag'
+        run: >-
+          bash scripts/validate-release.sh
+          "${GITHUB_REF_NAME}" origin/main "${GITHUB_SHA}"
+
+      - name: Lint, test, validate, and package
+        run: make pack
+
+      - name: Prepare versioned artifact
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(jq -r '."version-name"' metadata.json)
+          asset_name="exchangebar@oflifurkan-v${version}.shell-extension.zip"
+          cp dist/exchangebar@oflifurkan.shell-extension.zip "dist/${asset_name}"
+          (
+              cd dist
+              sha256sum "${asset_name}" > "${asset_name}.sha256"
+          )
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "asset_name=${asset_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload extension artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: exchangebar-v${{ steps.package.outputs.version }}
+          path: |
+            dist/${{ steps.package.outputs.asset_name }}
+            dist/${{ steps.package.outputs.asset_name }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download validated package
+        uses: actions/download-artifact@v8
+        with:
+          name: exchangebar-v${{ needs.build.outputs.version }}
+          path: release-assets
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: >-
+          gh release create "${GITHUB_REF_NAME}"
+          "release-assets/${{ needs.build.outputs.asset_name }}"
+          "release-assets/${{ needs.build.outputs.asset_name }}.sha256"
+          --generate-notes
+          --title "ExchangeBar ${GITHUB_REF_NAME}"
+          --verify-tag
