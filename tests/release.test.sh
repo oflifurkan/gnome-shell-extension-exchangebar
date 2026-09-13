@@ -25,4 +25,14 @@ if [[ ${root_commit} != "$(git rev-parse HEAD)" ]] &&
     exit 1
 fi
 
+if output=$(bash scripts/validate-release.sh \
+    "${tag}" refs/remotes/origin/missing HEAD 2>&1); then
+    echo 'Missing main ref was accepted' >&2
+    exit 1
+fi
+if [[ ${output} != *"Unable to compare release commit"* ]]; then
+    echo 'Git comparison failure was reported as an ancestry mismatch' >&2
+    exit 1
+fi
+
 echo 'release validation tests passed'
