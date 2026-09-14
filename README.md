@@ -1,111 +1,121 @@
 # ExchangeBar
 
-ExchangeBar is a GNOME Shell 50 extension that displays USD/TRY, EUR/TRY, and
-gram-gold/TRY prices in the top panel.
+**Exchange rates and gram-gold prices, right in the GNOME Shell panel.**
 
-Version 0.1 is being built incrementally. The current implementation contains
-the extension shell, a provider-independent market pipeline, and an offline
-converter for TRY, USD, EUR, and gold grams. Live free-market USD/TRY and
-EUR/TRY values come from the keyless DolarToday API; gram gold comes from the
-keyless XAUS spot API.
+ExchangeBar is a GNOME Shell 50 extension for keeping an eye on USD/TRY,
+EUR/TRY, and gram-gold/TRY without leaving the desktop. Open the panel menu for
+a fuller view, a quick currency/gold converter, and a one-click refresh.
+
+[View the project on GitHub](https://github.com/oflifurkan/gnome-shell-extension-exchangebar)
+
+## Highlights
+
+- Shows USD/TRY, EUR/TRY, and gram gold in the top panel.
+- Places the indicator on the right or beside the clock.
+- Lets you show or hide each instrument and choose its decimal precision.
+- Includes a compact converter for TRY, USD, EUR, and gold grams.
+- Uses free, keyless providers: DolarToday for FX and XAUS for gold.
+- Supports DolarToday Free Market and TCMB rate sources.
+- Keeps the last compatible snapshot available when starting up or when a
+  provider is temporarily unavailable, clearly marking stale values.
+- Refreshes automatically every 10, 15, 30, or 60 minutes, with manual refresh
+  available from the popup.
 
 ## Requirements
 
 - GNOME Shell 50
-- GJS with modern ES-module support
-- GTK 4 and Libadwaita (preferences)
-- `glib-compile-schemas`, `jq`, `xmllint`, `zip`, and `unzip` for development
-  checks and packaging
-- Node.js and npm for ESLint
-- Xvfb for the headless preferences smoke test
+- GTK 4 and Libadwaita (for Preferences)
+
+For local development, you will also need GJS with ES-module support,
+`glib-compile-schemas`, `jq`, `xmllint`, `zip`, `unzip`, Node.js/npm, and Xvfb.
+
+## Install from source
+
+Clone the repository, install the JavaScript development dependencies, then
+build and install the extension for your user account:
+
+```sh
+git clone https://github.com/oflifurkan/gnome-shell-extension-exchangebar.git
+cd gnome-shell-extension-exchangebar
+npm ci
+make install
+```
+
+Enable **ExchangeBar** in the Extensions app, or run:
+
+```sh
+gnome-extensions enable exchangebar@oflifurkan
+```
+
+If the extension does not appear immediately after installation, log out and
+back in, then enable it again.
+
+## Install a release
+
+Ready-to-use extension archives are attached to
+[GitHub Releases](https://github.com/oflifurkan/gnome-shell-extension-exchangebar/releases).
+Download the `.shell-extension.zip` asset from the latest release and install
+it with the Extensions app, or from a terminal:
+
+```sh
+gnome-extensions install --force ~/Downloads/exchangebar-*.shell-extension.zip
+gnome-extensions enable exchangebar@oflifurkan
+```
+
+With the [GitHub CLI](https://cli.github.com/), the latest archive can be
+downloaded and enabled entirely from the terminal:
+
+```sh
+mkdir exchangebar-release && cd exchangebar-release
+gh release download --repo oflifurkan/gnome-shell-extension-exchangebar \
+  --pattern '*.shell-extension.zip'
+gnome-extensions install --force ./*.shell-extension.zip
+gnome-extensions enable exchangebar@oflifurkan
+```
+
+Log out and back in if GNOME Shell does not discover the newly installed
+extension straight away.
+
+## Use
+
+Click an ExchangeBar value in the top panel to open its menu. The menu shows
+the latest quotes, their source and update status, a refresh button, and the
+converter. Open the extension's Preferences from the Extensions app to adjust
+panel placement, visible instruments, formatting, refresh frequency, and data
+sources. Changes take effect while the extension is running.
+
+> Market prices are informational and may be delayed or unavailable. They are
+> not financial advice.
+
+## Data sources
+
+ExchangeBar does not require an API key. By default it obtains USD/TRY and
+EUR/TRY from [DolarToday](https://dolartoday.org/) and gram-gold/TRY from
+[XAUS](https://xaus.com/). Provider selections are independent, and the
+preferences window also offers deterministic fake providers for development.
 
 ## Develop
 
-Run all tests and validation:
+Run the full local validation suite:
 
 ```sh
 npm ci
 make check
 ```
 
-Build an installable extension archive:
+Build an installable archive without installing it:
 
 ```sh
 make pack
 ```
 
-Install the archive for the current user:
-
-```sh
-make install
-```
-
-Log out and back in if GNOME Shell does not discover a newly installed
-extension, then enable `exchangebar@oflifurkan` with Extensions or the
-`gnome-extensions` command.
-
-## Architecture
-
-Providers return only normalized ExchangeBar quotes. `MarketService` owns
-provider instances and market state; the panel and popup consume that service
-and never access provider payloads. Currency and gold provider IDs are stored
-independently so later releases can mix data sources. Converter mathematics
-also consume only normalized quotes and have no dependency on Shell UI code.
-Market data refreshes ten minutes after each completed update attempt, and the
-popup provides a manual refresh action that resets that countdown. Successful
-snapshots are cached under the user's XDG cache directory. A compatible cached
-snapshot is shown immediately after startup; stale values remain available and
-are visually distinguished while ExchangeBar retries in the background.
-
-## Test live providers
-
-DolarToday and XAUS are free and keyless. Optional live provider checks are
-available:
+Optional live checks exercise the public providers:
 
 ```sh
 make test-dolartoday
 make test-xaus
 ```
 
-DolarToday is the default FX provider and XAUS is the default gold provider.
-To switch between live and deterministic data during development:
+## License
 
-```sh
-dconf write /org/gnome/shell/extensions/exchangebar/fx-provider "'dolar-today'"
-dconf write /org/gnome/shell/extensions/exchangebar/fx-provider "'fake'"
-dconf write /org/gnome/shell/extensions/exchangebar/gold-provider "'xaus'"
-dconf write /org/gnome/shell/extensions/exchangebar/gold-provider "'fake'"
-```
-
-The preferences window provides the same FX and gold provider selectors,
-10/15/30/60-minute refresh intervals, instrument visibility, decimal precision,
-panel placement on the right or in the center beside the clock, and a
-DolarToday source selector for Free Market or TCMB rates. Changes take effect
-while the extension is running; restarting GNOME Shell is not required.
-
-## Continuous integration
-
-GitHub Actions runs ESLint, the GJS unit tests, strict metadata and schema
-validation, a headless GTK/Libadwaita preferences smoke test, and extension
-packaging for pull requests and pushes to `main`. Successful builds are kept as
-downloadable workflow artifacts for 14 days. Live provider checks remain
-manual so an external service outage cannot block a build.
-
-## Release
-
-Releases use stable semantic tags and must come from `main`. To publish a
-release:
-
-1. Update `version-name` in `metadata.json`, for example to `0.2.0`.
-2. Merge and push that change to `main`, then wait for CI to pass.
-3. Create and push the matching tag:
-
-   ```sh
-   git tag v0.2.0
-   git push origin v0.2.0
-   ```
-
-The tag workflow rejects malformed tags, version mismatches, and commits that
-are not part of `main`. A valid tag publishes a GitHub Release with generated
-notes, a versioned `.shell-extension.zip`, and its SHA-256 checksum. It does not
-publish to extensions.gnome.org.
+This project is licensed under the terms in [LICENSE](LICENSE).

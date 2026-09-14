@@ -27,9 +27,22 @@ if ! jq -e '
     exit 1
 fi
 
-if ! git merge-base --is-ancestor "${release_commit}" "${main_ref}"; then
-    echo "Release commit ${release_commit} is not contained in ${main_ref}" >&2
-    exit 1
-fi
+set +e
+git merge-base --is-ancestor "${release_commit}" "${main_ref}"
+ancestry_status=$?
+set -e
+
+case ${ancestry_status} in
+    0)
+        ;;
+    1)
+        echo "Release commit ${release_commit} is not contained in ${main_ref}" >&2
+        exit 1
+        ;;
+    *)
+        echo "Unable to compare release commit ${release_commit} with ${main_ref}" >&2
+        exit "${ancestry_status}"
+        ;;
+esac
 
 echo "release validation passed: ${tag}"
